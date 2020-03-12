@@ -7,7 +7,7 @@ Organizacion: Universidad de Burgos
 Version: 3.1
 Fecha ultima version: 04/02/2019
 '''
-
+import random
 import os
 import numpy as np
 from StringIO import StringIO
@@ -38,25 +38,36 @@ del componente.
 
 '''
 
-def telnet(ip):
+def telnet():
 	wait = 2
-	HOST = "192.168.122.192"
-	user = raw_input("Enter your username: ")
-	password = getpass.getpass()
+	ips,host,netmask,gateway=subnet_calc()
+	for ip in ips:
 
-	tn = telnetlib.Telnet(HOST)
 
-	tn.read_until("alberto-VirtualBox login: ")
-	tn.write(user + "\n")
-	if password:
-	    tn.read_until("Password: ")
-	    tn.write(password + "\n")
+		user = raw_input("Introduce tu nombre de usuario: ")
+		password = getpass.getpass()
 
-	tn.write("sudo ifconfig enp0s3 192.168.122.193 netmask 255.255.255.0 \n")
-	tn.write(password + "\n")
-	tn.write("exit\n")
+		tn = telnetlib.Telnet(host)
 
-	print tn.read_all()
+		tn.read_until("alberto-VirtualBox login: ")
+		tn.write(user + "\n")
+		if password:
+		    tn.read_until("Password: ")
+		    tn.write(password + "\r\n")
+
+		tn.write("sudo su root\r\n")
+		tn.read_until("[sudo] password for "+user+": ")
+		tn.write(password + "\n")
+
+		tn.write("nmcli connection modify eth0 ipv4.addresses " + str(ip) + "/"+ str(netmask) + " ipv4.gateway " + str(gateway) + " ipv4.method manual connection.autoconnect yes\r\n")
+
+		tn.write("nmcli connection up eth0\r\n")
+		
+		tn.write("ping " + ip +"\r\n")
+		
+		tn.read_all()
+		
+		tn.close()
             
 
 '''
@@ -74,6 +85,171 @@ def menu():
     print("\t1 - Leer configuracion")
     print("\t2 - Lanzar Configuracion")
     print("\t9 - Salir")
+
+def subnet_calc():
+
+    try:
+
+        while True:
+            # Take IP as input
+            input_ip = raw_input("\nIntroduce IP destino: ")
+
+            # Validate the IP
+            octet_ip = input_ip.split(".")
+            #print octet_ip
+            int_octet_ip = [int(i) for i in octet_ip]
+
+            if (len(int_octet_ip) == 4) and \
+                    (int_octet_ip[0] != 127) and \
+                    (int_octet_ip[0] != 169) and  \
+                    (0 <= int_octet_ip[1] <= 255) and \
+                    (0 <= int_octet_ip[2] <=255) and \
+                    (0 <= int_octet_ip[3] <= 255):
+                break
+            else:
+                print "Invalid IP, retry \n"
+                continue
+
+        # Predefine possible subnet masks
+        masks = [0, 128, 192, 224, 240, 248, 252, 254, 255]
+        while True:
+
+            # Take subnet mask as input
+            input_subnet = raw_input("\nIntroduce mascara de subred: ")
+
+            # Validate the subnet mask
+            octet_subnet = [int(j) for j in input_subnet.split(".")]
+            # print octet_subnet
+            if (len(octet_subnet) == 4) and \
+                    (octet_subnet[0] == 255) and \
+                    (octet_subnet[1] in masks) and \
+                    (octet_subnet[2] in masks) and \
+                    (octet_subnet[3] in masks) and \
+                    (octet_subnet[0] >= octet_subnet[1] >= octet_subnet[2] >= octet_subnet[3]):
+                break
+            else:
+                print "Invalid subnet mask, retry\n"
+                continue
+
+# Converting IP and subnet to binary
+
+        ip_in_binary = []
+
+        # Convert each IP octet to binary
+        ip_in_bin_octets = [bin(i).split("b")[1] for i in int_octet_ip]
+
+        # make each binary octet of 8 bit length by padding zeros
+        for i in range(0,len(ip_in_bin_octets)):
+            if len(ip_in_bin_octets[i]) < 8:
+                padded_bin = ip_in_bin_octets[i].zfill(8)
+                ip_in_binary.append(padded_bin)
+            else:
+                ip_in_binary.append(ip_in_bin_octets[i])
+
+        # join the binary octets
+        ip_bin_mask = "".join(ip_in_binary)
+
+        # print ip_bin_mask
+
+        sub_in_bin = []
+
+        # convert each subnet octet to binary
+        sub_bin_octet = [bin(i).split("b")[1] for i in octet_subnet]
+
+        # make each binary octet of 8 bit length by padding zeros
+        for i in sub_bin_octet:
+            if len(i) < 8:
+                sub_padded = i.zfill(8)
+                sub_in_bin.append(sub_padded)
+            else:
+                sub_in_bin.append(i)
+
+        # print sub_in_bin
+        sub_bin_mask = "".join(sub_in_bin)
+
+        # calculating number of hosts
+        no_zeros = sub_bin_mask.count("0")
+        no_ones = 32 - no_zeros
+        no_hosts = abs(2 ** no_zeros - 2)
+
+        # Calculating the network and broadcast address
+        network_add_bin = ip_bin_mask[:no_ones] + "0" * no_zeros
+        broadcast_add_bin = ip_bin_mask[:no_ones] + "1" * no_zeros
+
+        network_add_bin_octet = []
+        broadcast_binoct = []
+
+        [network_add_bin_octet.append(i) for i in [network_add_bin[j:j+8]
+                                                   for j in range(0, len(network_add_bin), 8)]]
+        [broadcast_binoct.append(i) for i in [broadcast_add_bin[j:j+8]
+                                              for j in range(0,len(broadcast_add_bin),8)]]
+
+        network_add_dec_final = ".".join([str(int(i,2)) for i in network_add_bin_octet])
+        broadcast_add_dec_final = ".".join([str(int(i,2)) for i in broadcast_binoct])
+
+        # Calculate the host IP range
+        first_ip_host = network_add_bin_octet[0:3] + [(bin(int(network_add_bin_octet[3],2)+1).split("b")[1].zfill(8))]
+        first_ip = ".".join([str(int(i,2)) for i in first_ip_host])
+
+        last_ip_host = broadcast_binoct[0:3] + [bin(int(broadcast_binoct[3],2) - 1).split("b")[1].zfill(8)]
+        last_ip = ".".join([str(int(i,2)) for i in last_ip_host])
+
+        # print all the computed results
+        print "\nLa ip de destino es: " + input_ip
+        print "La mascara de subred es: " + input_subnet
+        print "Numero de maquinas por subred: {0}".format(str(no_hosts))
+        print "Numero de bits de la mascara: {0}".format(str(no_ones))
+        print "Direccion de red: {0}".format(network_add_dec_final)
+        print "Direccion de broadcast: {0}".format(broadcast_add_dec_final)
+        print "Rango de direcciones de la subred: {0} - {1}".format(first_ip, last_ip)
+        print "Maximo numero de subredes: " + str(2**abs(24 - no_ones))
+        list_ip = []
+
+        print ""
+        # ask to generate a random ip in the range
+        if raw_input("Generar ip aleatoria? [y/n]") == 'y':
+            while True:
+                randip = []
+
+                # Check if the octet bit is same in first and last host address.
+                # If same, append it. else generate random IP
+                for i in range(0,len(first_ip_host)):
+                    for j in range(0,len(last_ip_host)):
+                        if i == j:
+                            if first_ip_host[i] == last_ip_host[j]:
+                                randip.append(int(first_ip_host[i],2))
+                            else:
+                                randip.append(random.randint(int(first_ip_host[i],2),int(last_ip_host[j],2)))
+
+                random_ip_final = ".".join(str(i) for i in randip)
+
+                # check if generated IP has already been printed. If so, compute again till unique IP is obtained
+                if random_ip_final in list_ip:
+
+                    # if all IPs in the host range are used, exit
+                    if len(list_ip) == no_hosts:
+                        print "All IPs in the range used up, exiting\n"
+                        break
+                    continue
+
+                else:
+                    print random_ip_final + '\n'
+
+                list_ip.append(random_ip_final)
+                print "Lista de IPs generadas:" , sorted(list_ip) ,'\n'
+
+                if raw_input("\nGenerar otra IP? [y/n]") == 'y':
+                    continue
+                else:
+                    break
+	
+	return list_ip, input_ip, no_ones, first_ip
+    except KeyboardInterrupt:
+        print "Interrupted by the User, exiting\n"
+    except ValueError:
+        print "Seem to have entered an incorrect value, exiting\n"
+
+
     
 
 while True:
@@ -90,10 +266,8 @@ while True:
     elif opcionMenu == 2:
         print("")
         print("Lanzando configuracion...\n pulsa enter para continuar")
-        j=0
-        while j <= numConfigs-1:
-            telnet(array[j][4])
-            j+=1
+       
+        telnet()
         print("Configuracion realizada correctamente.")
         
         break

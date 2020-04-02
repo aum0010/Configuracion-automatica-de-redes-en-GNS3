@@ -16,6 +16,9 @@ import time
 import getpass
 import sys
 import telnetlib
+import socket
+import platform    # For getting the operating system name
+import subprocess  # For executing a shell command
 
 
 
@@ -39,36 +42,74 @@ del componente.
 '''
 
 def telnet():
+	todo_ok=False
 	wait = 2
-	ips,host,netmask,gateway=subnet_calc()
-	for ip in ips:
+	hostname = socket.gethostname()
+	IPAddr = get_ip()
+	print("Your Computer Name is: " + hostname)    
+	print("Your Computer IP Address is: " + IPAddr)
+	while todo_ok == False:
+		ip,host,netmask,gateway,todo_ok=subnet_calc()
+	
 
+	ping(host)
+	user = raw_input("Introduce tu nombre de usuario: ")
+	password = getpass.getpass()
 
-		user = raw_input("Introduce tu nombre de usuario: ")
-		password = getpass.getpass()
+	tn = telnetlib.Telnet(host)
 
-		tn = telnetlib.Telnet(host)
+	tn.read_until(hostname+" login: ")
+	tn.write(user + "\n")
+	if password:
+		   tn.read_until("Password: ")
+		   tn.write(password + "\r\n")
 
-		tn.read_until("alberto-VirtualBox login: ")
-		tn.write(user + "\n")
-		if password:
-		    tn.read_until("Password: ")
-		    tn.write(password + "\r\n")
+	tn.write("sudo su root\r\n")
+	tn.read_until("[sudo] password for "+user+": ")
+	tn.write(password + "\n")
 
-		tn.write("sudo su root\r\n")
-		tn.read_until("[sudo] password for "+user+": ")
-		tn.write(password + "\n")
+	tn.write("nmcli connection modify eth0 ipv4.addresses " + str(ip) + "/"+ str(netmask) + " ipv4.gateway " + str(gateway) + " ipv4.method manual connection.autoconnect yes\r\n")
 
-		tn.write("nmcli connection modify eth0 ipv4.addresses " + str(ip) + "/"+ str(netmask) + " ipv4.gateway " + str(gateway) + " ipv4.method manual connection.autoconnect yes\r\n")
-
-		tn.write("nmcli connection up eth0\r\n")
+	tn.write("nmcli connection up eth0\r\n")
 		
-		tn.write("ping " + ip +"\r\n")
+	tn.write("ping " + ip +"\r\n")
 		
-		tn.read_all()
+	tn.read_all()
 		
-		tn.close()
+	tn.close()
             
+def convert_ipv4(ip):
+    return tuple(int(n) for n in ip.split('.'))
+
+def check_ipv4_in(addr, start, end):
+    return convert_ipv4(start) < convert_ipv4(addr) < convert_ipv4(end)
+
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
+def ping(host):
+    """
+    Returns True if host (str) responds to a ping request.
+    Remember that a host may not respond to a ping (ICMP) request even if the host name is valid.
+    """
+
+    # Option for the number of packets as a function of
+    param = '-n' if platform.system().lower()=='windows' else '-c'
+
+    # Building the command. Ex: "ping -c 1 google.com"
+    command = ['ping', param, '4', host]
+
+    return subprocess.call(command) == 0
 
 '''
 menu()
@@ -87,12 +128,13 @@ def menu():
     print("\t9 - Salir")
 
 def subnet_calc():
-
+   
     try:
 
         while True:
             # Take IP as input
-            input_ip = raw_input("\nIntroduce IP destino: ")
+            input_ip = get_ip()
+	    dest_ip = raw_input("\nIntroduce IP destino: ")
 
             # Validate the IP
             octet_ip = input_ip.split(".")
@@ -195,7 +237,7 @@ def subnet_calc():
         last_ip = ".".join([str(int(i,2)) for i in last_ip_host])
 
         # print all the computed results
-        print "\nLa ip de destino es: " + input_ip
+        print "\nLa ip de destino es: " + dest_ip
         print "La mascara de subred es: " + input_subnet
         print "Numero de maquinas por subred: {0}".format(str(no_hosts))
         print "Numero de bits de la mascara: {0}".format(str(no_ones))
@@ -206,44 +248,82 @@ def subnet_calc():
         list_ip = []
 
         print ""
-        # ask to generate a random ip in the range
-        if raw_input("Generar ip aleatoria? [y/n]") == 'y':
-            while True:
-                randip = []
 
+	#aviso de si esta en rango
+	en_rango= check_ipv4_in(dest_ip, first_ip, last_ip)
+	if en_rango:
+		print "La ip esta en la misma subred. "
+		todo_ok = True
+	else:
+		print "La ip no esta en la misma subred. "
+		cambiar=raw_input("Desea cambiar la ip destino? [y/n]")
+		if cambiar == 'y':
+			todo_ok = False	
+		else:
+			todo_ok = True
+
+	#al archivo de log
+	file1 = open("logs.txt","w")
+	file1.write("Ip de destino: "+ dest_ip +"\n")
+	file1.write("Mascara de subred : "+ input_subnet +"\n")
+	file1.close()
+
+        # ask to generate a random ip in the range
+	
+        if todo_ok == True:
+	    todo_ok2=False
+            cambiar2=True		
+            while todo_ok2 == False:
+                new_ip = raw_input("Introduce nueva ip para el destino: ") 
+		en_rango= check_ipv4_in(new_ip, first_ip, last_ip)
+		if en_rango:
+			print "La ip esta en la misma subred. "
+			todo_ok2 = True
+		else:
+			print "La ip no esta en la misma subred. "
+			cambiar2=raw_input("Desea cambiar la nueva ip destino? [y/n]")
+		if cambiar2 == 'y':
+			todo_ok2 = False	
+		else:
+			todo_ok2 = True
+	#nueva ip a archivo de log
+	file1 = open("logs.txt","a")
+	file1.write("Nueva Ip de destino: "+ new_ip +"\n")
+	file1.close()
+	
                 # Check if the octet bit is same in first and last host address.
                 # If same, append it. else generate random IP
-                for i in range(0,len(first_ip_host)):
-                    for j in range(0,len(last_ip_host)):
-                        if i == j:
-                            if first_ip_host[i] == last_ip_host[j]:
-                                randip.append(int(first_ip_host[i],2))
-                            else:
-                                randip.append(random.randint(int(first_ip_host[i],2),int(last_ip_host[j],2)))
+                #for i in range(0,len(first_ip_host)):
+                #    for j in range(0,len(last_ip_host)):
+                #        if i == j:
+                #            if first_ip_host[i] == last_ip_host[j]:
+                #                randip.append(int(first_ip_host[i],2))
+                #            else:
+                #                randip.append(random.randint(int(first_ip_host[i],2),int(last_ip_host[j],2)))
 
-                random_ip_final = ".".join(str(i) for i in randip)
+                #random_ip_final = ".".join(str(i) for i in randip)
 
                 # check if generated IP has already been printed. If so, compute again till unique IP is obtained
-                if random_ip_final in list_ip:
+               # if random_ip_final in list_ip:
 
                     # if all IPs in the host range are used, exit
-                    if len(list_ip) == no_hosts:
-                        print "All IPs in the range used up, exiting\n"
-                        break
-                    continue
+               #     if len(list_ip) == no_hosts:
+               #         print "All IPs in the range used up, exiting\n"
+               #         break
+                #    continue
 
-                else:
-                    print random_ip_final + '\n'
+                #else:
+                #    print random_ip_final + '\n'
 
-                list_ip.append(random_ip_final)
-                print "Lista de IPs generadas:" , sorted(list_ip) ,'\n'
+                #list_ip.append(random_ip_final)
+               # print "Lista de IPs generadas:" , sorted(list_ip) ,'\n'
 
-                if raw_input("\nGenerar otra IP? [y/n]") == 'y':
-                    continue
-                else:
-                    break
+               # if raw_input("\nGenerar otra IP? [y/n]") == 'y':
+               #     continue
+               # else:
+               #     break
 	
-	return list_ip, input_ip, no_ones, first_ip
+	return new_ip, dest_ip, no_ones, first_ip, todo_ok
     except KeyboardInterrupt:
         print "Interrupted by the User, exiting\n"
     except ValueError:
